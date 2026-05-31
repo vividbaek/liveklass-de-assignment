@@ -43,8 +43,8 @@ CREATE TABLE IF NOT EXISTS events (
     -- page_view/course_view에서는 페이지 체류 시간, lesson_started/lesson_completed에서는 시청 시간으로 사용합니다.
     duration_seconds INTEGER,
 
-    -- 결제 완료 이벤트에서 결제 금액을 저장합니다.
-    amount NUMERIC(10, 2),
+    -- 결제 완료 이벤트에서 원화 기준 결제 금액을 정수로 저장합니다.
+    amount INTEGER,
 
     -- 결제 완료 이벤트에서 결제 수단을 저장합니다.
     -- 예: card, kakao_pay, bank_transfer

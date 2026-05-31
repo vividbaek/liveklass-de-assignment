@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from decimal import Decimal
 from typing import Any
 
-from src.event_generator import EVENT_COLUMNS, generate_events
+from src.enums.event_values import EVENT_COLUMNS
+from src.event_generator import generate_events
 
 
 def main() -> None:
-    events = generate_events(target_count=1000)
+    events = generate_events(target_sessions=250)
     event_counts = Counter(event["event_type"] for event in events)
+    session_count = len({event["session_id"] for event in events})
 
-    print(f"Generated {len(events)} synthetic events")
+    print(f"Generated {len(events)} synthetic events from {session_count} sessions")
     print()
     print("Event counts by type:")
     for event_type, count in event_counts.most_common():
@@ -41,8 +42,6 @@ def _validate_event_keys(events: list[dict[str, Any]]) -> None:
 
 
 def _json_default(value: Any) -> str:
-    if isinstance(value, Decimal):
-        return str(value)
     return value.isoformat()
 
 
