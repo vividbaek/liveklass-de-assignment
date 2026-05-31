@@ -27,17 +27,17 @@ def wait_for_database(max_attempts: int = 20, delay_seconds: float = 1.0) -> Non
     for attempt in range(1, max_attempts + 1):
         try:
             with psycopg.connect(**DB_CONFIG):
-                print("PostgreSQL is ready")
+                print("PostgreSQL 준비 완료")
                 return
         except psycopg.OperationalError as error:
             last_error = error
             print(
-                f"Waiting for PostgreSQL... "
-                f"attempt {attempt}/{max_attempts}"
+                f"PostgreSQL 연결 대기 중... "
+                f"시도 {attempt}/{max_attempts}"
             )
             time.sleep(delay_seconds)
 
-    raise RuntimeError("PostgreSQL did not become ready") from last_error
+    raise RuntimeError("PostgreSQL이 준비 상태가 되지 않았습니다") from last_error
 
 
 def initialize_schema() -> None:
@@ -47,7 +47,7 @@ def initialize_schema() -> None:
         with connection.cursor() as cursor:
             cursor.execute(init_sql)
 
-    print("Initialized database schema")
+    print("데이터베이스 스키마 초기화 완료")
 
 
 def reset_events_table() -> None:
@@ -55,7 +55,7 @@ def reset_events_table() -> None:
         with connection.cursor() as cursor:
             cursor.execute("TRUNCATE TABLE events;")
 
-    print("Truncated events table")
+    print("events 테이블 초기화 완료")
 
 
 def insert_events(events: list[dict[str, Any]], batch_size: int = 1000) -> int:
@@ -73,7 +73,7 @@ def insert_events(events: list[dict[str, Any]], batch_size: int = 1000) -> int:
                 rows = [tuple(event[column] for column in EVENT_COLUMNS) for event in batch]
                 cursor.executemany(insert_sql, rows)
                 inserted_count += len(batch)
-                print(f"Inserted batch {batch_number}: {len(batch)} rows")
+                print(f"배치 {batch_number} 적재 완료: {len(batch)}행")
 
     return inserted_count
 

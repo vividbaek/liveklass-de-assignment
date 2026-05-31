@@ -1,1 +1,1 @@
-"""Static values used by the synthetic event generator."""
+"""합성 이벤트 생성기에서 사용하는 정적 값입니다."""
