@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS events (
     event_id UUID PRIMARY KEY,
 
     -- 이벤트 종류입니다.
-    -- 예: page_view, course_view, lesson_started, lesson_completed, purchase_completed, error_occurred
+    -- 예: page_view, course_view, lesson_started, lesson_completed, checkout_started, purchase_completed, error_occurred
     event_type VARCHAR(50) NOT NULL,
 
     -- 이벤트가 실제로 발생한 시간입니다.
@@ -38,6 +38,10 @@ CREATE TABLE IF NOT EXISTS events (
     -- 사용자가 접근한 기기 유형입니다.
     -- 예: desktop, mobile, tablet
     device_type VARCHAR(20),
+
+    -- 페이지 체류 시간 또는 강의 콘텐츠 시청 시간을 초 단위로 저장합니다.
+    -- page_view/course_view에서는 페이지 체류 시간, lesson_started/lesson_completed에서는 시청 시간으로 사용합니다.
+    duration_seconds INTEGER,
 
     -- 결제 완료 이벤트에서 결제 금액을 저장합니다.
     amount NUMERIC(10, 2),
