@@ -70,3 +70,12 @@ ON events (course_id);
 
 CREATE INDEX IF NOT EXISTS idx_events_user_id
 ON events (user_id);
+
+CREATE INDEX IF NOT EXISTS idx_events_session_id
+ON events (session_id);
+
+CREATE INDEX IF NOT EXISTS idx_events_type_session
+ON events (event_type, session_id);
+
+CREATE INDEX IF NOT EXISTS idx_events_type_course
+ON events (event_type, course_id);
