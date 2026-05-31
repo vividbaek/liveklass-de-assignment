@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Local editor and OS files
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Docker / local runtime artifacts
+postgres_data/
+*.log
+
+# Generated outputs
+charts/*.png
+charts/*.jpg
+charts/*.jpeg
+charts/*.svg
+!charts/.gitkeep
