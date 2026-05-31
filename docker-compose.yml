@@ -1,0 +1,28 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: liveklass-postgres
+    environment:
+      POSTGRES_DB: liveklass
+      POSTGRES_USER: liveklass
+      POSTGRES_PASSWORD: liveklass
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U liveklass -d liveklass"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    container_name: liveklass-app
+    environment:
+      POSTGRES_DB: liveklass
+      POSTGRES_USER: liveklass
+      POSTGRES_PASSWORD: liveklass
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+    depends_on:
+      postgres:
+        condition: service_healthy
