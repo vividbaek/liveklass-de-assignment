@@ -274,7 +274,9 @@ def _course_view_duration(rng: random.Random, scenario: str) -> int:
 
 
 def _watch_seconds(rng: random.Random, scenario: str) -> int:
-    if scenario in {"preview_to_purchase", "preview_completed_no_purchase"}:
+    if scenario == "preview_to_purchase":
+        return rng.randint(120, 900)
+    if scenario == "preview_completed_no_purchase":
         return rng.randint(300, 900)
     if scenario == "paid_learning":
         return rng.randint(600, 1800)
