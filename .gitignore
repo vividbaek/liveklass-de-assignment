@@ -34,3 +34,7 @@ charts/*.jpg
 charts/*.jpeg
 charts/*.svg
 !charts/.gitkeep
+!charts/session_funnel.png
+!charts/preview_watch_conversion.png
+!charts/course_revenue.png
+!charts/error_area_counts.png
