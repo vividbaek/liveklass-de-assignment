@@ -224,3 +224,6 @@ docker compose run --rm -v "$PWD/charts:/app/charts" app python -m src.visualize
 핵심 방향은 PostgreSQL 직접 적재에서 끝내지 않고,
 `Kinesis Data Streams`, `Kinesis Data Firehose`, `S3`, `RDS PostgreSQL`, `Glue`, `Athena`, `QuickSight`, `CloudWatch`, `SQS DLQ`를 조합해
 실시간 이벤트 수집, raw archive, SQL 분석, BI 시각화, 장애 재처리가 가능한 구조로 확장하는 것입니다.
+
+Kubernetes/EKS는 현재 과제의 필수 구현이 아니라 향후 container orchestration 확장안으로 정리했습니다.
+기본 개념과 Liveklass 적용 방식은 [docs/kubernetes-architecture.md](docs/kubernetes-architecture.md)에 설명했습니다.
