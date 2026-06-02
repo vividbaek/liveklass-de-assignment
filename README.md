@@ -75,6 +75,15 @@ PostgreSQL에 적재한 뒤 SQL 집계와 PNG 시각화를 통해 학습/결제 
 
 Docker Compose로 PostgreSQL과 Python app을 함께 실행합니다.
 
+데이터 적재, 분석 SQL 실행, PNG 차트 생성을 한 번에 재현하려면 다음 스크립트를 실행합니다.
+
+```bash
+bash scripts/run_pipeline.sh
+```
+
+이 스크립트는 PostgreSQL을 실행한 뒤 synthetic event를 적재하고,
+`sql/analysis_queries.sql`을 실행한 다음 `charts/`에 최종 PNG 이미지를 생성합니다.
+
 ```bash
 docker compose up --build
 ```
@@ -121,6 +130,13 @@ docker exec -it liveklass-postgres psql -U liveklass -d liveklass
 
 ```bash
 docker exec -i liveklass-postgres psql -U liveklass -d liveklass < sql/analysis_queries.sql
+```
+
+각 지표별 SQL은 `sql/queries/`에도 개별 파일로 분리되어 있습니다.
+예를 들어 특정 지표만 확인하고 싶다면 다음처럼 실행할 수 있습니다.
+
+```bash
+docker exec -i liveklass-postgres psql -U liveklass -d liveklass < sql/queries/session_funnel.sql
 ```
 
 ## 지표 선정 이유
@@ -198,3 +214,13 @@ docker compose run --rm -v "$PWD/charts:/app/charts" app python -m src.visualize
 
 이를 통해 DB 부하를 완화하고, 장애 상황에서도 이벤트 손실을 줄이며,
 분석 목적에 따라 raw log와 mart table을 분리해 운영할 수 있습니다.
+
+## AWS 선택 과제
+
+현재 로컬 batch pipeline을 AWS 운영 환경으로 확장하는 설계는 [docs/aws-architecture.md](docs/aws-architecture.md)에 정리했습니다.
+
+![AWS architecture](docs/aws-architecture.png)
+
+핵심 방향은 PostgreSQL 직접 적재에서 끝내지 않고,
+`Kinesis Data Streams`, `Kinesis Data Firehose`, `S3`, `RDS PostgreSQL`, `Glue`, `Athena`, `QuickSight`, `CloudWatch`, `SQS DLQ`를 조합해
+실시간 이벤트 수집, raw archive, SQL 분석, BI 시각화, 장애 재처리가 가능한 구조로 확장하는 것입니다.
