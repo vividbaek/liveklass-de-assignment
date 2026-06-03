@@ -26,15 +26,17 @@ FONT_SEMIBOLD_PATH = FONT_DIR / "Pretendard-SemiBold.otf"
 GRID_COLOR = "#e5e7eb"
 TEXT_COLOR = "#111827"
 MUTED_TEXT_COLOR = "#475569"
-FUNNEL_COLORS = ["#93c5fd", "#60a5fa", "#2563eb", "#f97316"]
-WATCH_COLORS = ["#dbeafe", "#93c5fd", "#60a5fa", "#f97316"]
-REVENUE_COLORS = ["#1d4ed8", "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd"]
+ACCENT_COLOR = "#f97316"
+FUNNEL_COLORS = ["#93c5fd", "#60a5fa", "#2563eb", ACCENT_COLOR]
+WATCH_COLORS = ["#dbeafe", "#bfdbfe", "#93c5fd", "#60a5fa"]
+REVENUE_COLORS = [ACCENT_COLOR, "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd"]
 ERROR_COLORS = {
     "payment": "#ef4444",
-    "live_class": "#f97316",
+    "live_class": ACCENT_COLOR,
     "lesson": "#64748b",
     "video": "#94a3b8",
 }
+DEFAULT_FOOTNOTE = "Synthetic event data · session 기준 집계 · 과제 검증용 데이터"
 
 COURSE_SHORT_LABELS = {
     "course_class_setup": "클래스 세팅",
@@ -84,20 +86,52 @@ def draw_session_funnel() -> None:
     values = [session_count for _, session_count, _, _ in rows]
     from_start_rates = [from_start for _, _, from_start, _ in rows]
     from_previous_rates = [from_previous for _, _, _, from_previous in rows]
+    start_count = values[0] if values else 0
+    purchase_count = values[-1] if values else 0
+    purchase_rate = from_start_rates[-1] if from_start_rates else 0
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = _create_chart_figure()
     colors = FUNNEL_COLORS[: len(labels)]
     bars = ax.bar(labels, values, color=colors, width=0.62)
-    _style_axes(ax, title="세션 퍼널 전환율", y_grid=True)
+    _add_chart_context(
+        fig,
+        title="세션 퍼널 전환율",
+        subtitle=(
+            f"{start_count:,}개 세션 중 {purchase_count:,}개가 "
+            f"구매 완료까지 도달했습니다 ({purchase_rate}%)."
+        ),
+    )
+    _style_axes(ax, y_grid=True)
     ax.set_ylabel("세션 수")
-    ax.set_ylim(0, max(values) * 1.24 if values else 1)
+    ax.set_ylim(0, max(values) * 1.42 if values else 1)
     ax.tick_params(axis="x", rotation=18)
 
     for index, (bar, value) in enumerate(zip(bars, values)):
         label = f"{value:,}\n시작 대비 {from_start_rates[index]}%"
-        if from_previous_rates[index] is not None:
-            label += f"\n이전 대비 {from_previous_rates[index]}%"
-        _label_vertical_bar(ax, bar, label)
+        _label_vertical_bar(ax, bar, label, fontweight="semibold")
+
+    if values:
+        arrow_y = max(values) * 1.24
+        for index, rate in enumerate(from_previous_rates[1:], start=1):
+            ax.annotate(
+                "",
+                xy=(index - 0.18, arrow_y),
+                xytext=(index - 0.82, arrow_y),
+                arrowprops={
+                    "arrowstyle": "->",
+                    "color": MUTED_TEXT_COLOR,
+                    "lw": 1.3,
+                },
+            )
+            ax.text(
+                index - 0.5,
+                arrow_y + max(values) * 0.035,
+                f"이전 대비 {rate}%",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                color=MUTED_TEXT_COLOR,
+            )
 
     _finish_chart(fig, CHART_DIR / "session_funnel.png")
 
@@ -108,27 +142,46 @@ def draw_preview_watch_conversion() -> None:
     conversion_rates = [float(conversion_rate) for _, _, _, conversion_rate in rows]
     preview_counts = [preview_count for _, preview_count, _, _ in rows]
     purchase_counts = [purchase_count for _, _, purchase_count, _ in rows]
+    max_index = (
+        max(range(len(conversion_rates)), key=conversion_rates.__getitem__)
+        if conversion_rates
+        else 0
+    )
+    max_label = labels[max_index] if labels else "N/A"
+    max_rate = conversion_rates[max_index] if conversion_rates else 0
 
-    fig, ax = plt.subplots(figsize=(8, 5))
-    colors = WATCH_COLORS[: len(labels)]
+    fig, ax = _create_chart_figure()
+    colors = [
+        ACCENT_COLOR if index == max_index else WATCH_COLORS[index]
+        for index in range(len(labels))
+    ]
     bars = ax.bar(labels, conversion_rates, color=colors, width=0.62)
-    _style_axes(ax, title="무료 체험 시청 시간별 구매 전환율", y_grid=True)
+    _add_chart_context(
+        fig,
+        title="무료 체험 시청 시간별 구매 전환율",
+        subtitle=(
+            f"{max_label} 시청 세션의 구매 전환율이 가장 높습니다 "
+            f"({max_rate:.2f}%)."
+        ),
+    )
+    _style_axes(ax, y_grid=True)
     ax.set_xlabel("시청 시간 구간")
     ax.set_ylabel("구매 전환율 (%)")
-    ax.set_ylim(0, max(conversion_rates) * 1.25 if conversion_rates else 1)
+    ax.set_ylim(0, max(conversion_rates) * 1.34 if conversion_rates else 1)
 
-    for bar, rate, preview_count, purchase_count in zip(
+    for index, (bar, rate, preview_count, purchase_count) in enumerate(zip(
         bars,
         conversion_rates,
         preview_counts,
         purchase_counts,
-    ):
+    )):
         label_y = max(rate, ax.get_ylim()[1] * 0.045)
         _label_vertical_bar(
             ax,
             bar,
-            f"{rate:.2f}%\n{purchase_count:,}/{preview_count:,}",
+            f"{rate:.2f}%\n구매 {purchase_count:,} / 시청 {preview_count:,}",
             y=label_y,
+            fontweight="semibold" if index == max_index else "normal",
         )
 
     _finish_chart(fig, CHART_DIR / "preview_watch_conversion.png")
@@ -139,18 +192,29 @@ def draw_course_revenue() -> None:
     labels = [COURSE_SHORT_LABELS.get(course_id, course_id) for course_id, _, _ in rows]
     revenues = [revenue for _, _, revenue in rows]
     purchase_counts = [purchase_count for _, purchase_count, _ in rows]
+    top_purchase_index = (
+        max(range(len(purchase_counts)), key=purchase_counts.__getitem__)
+        if purchase_counts
+        else 0
+    )
 
     _draw_horizontal_bar(
         labels=labels,
         values=revenues,
         title="강의별 매출",
-        xlabel="매출 (백만 원)",
+        subtitle=(
+            f"매출 1위는 {labels[0]}, 구매 수 1위는 "
+            f"{labels[top_purchase_index]}입니다."
+            if labels
+            else "강의별 매출과 구매 수를 함께 비교합니다."
+        ),
+        xlabel="매출 (만원)",
         output_path=CHART_DIR / "course_revenue.png",
         colors=REVENUE_COLORS[: len(labels)],
         value_formatter=lambda index, value: (
-            f"{value / 1_000_000:.1f}백만 원 / 구매 {purchase_counts[index]:,}건"
+            f"{value / 10_000:,.0f}만 원 / 구매 {purchase_counts[index]:,}건"
         ),
-        xaxis_formatter=lambda value: f"{value / 1_000_000:.0f}백만",
+        xaxis_formatter=lambda value: f"{value / 10_000:.0f}만",
     )
 
 
@@ -158,15 +222,36 @@ def draw_error_area_counts() -> None:
     rows = fetch_error_area_counts()
     labels = [ERROR_LABELS.get(error_area, error_area) for error_area, _ in rows]
     values = [count for _, count in rows]
-    colors = [ERROR_COLORS.get(error_area, "#94a3b8") for error_area, _ in rows]
+    total_errors = sum(values)
+    percentages = [
+        value / total_errors * 100
+        if total_errors
+        else 0
+        for value in values
+    ]
+    top_label = labels[0] if labels else "N/A"
+    top_share = percentages[0] if percentages else 0
+    colors = [
+        ERROR_COLORS.get(error_area, "#94a3b8")
+        if error_area == "payment"
+        else "#94a3b8"
+        for error_area, _ in rows
+    ]
 
     _draw_horizontal_bar(
         labels=labels,
         values=values,
         title="오류 영역별 발생 수",
+        subtitle=(
+            f"{top_label} 오류가 전체 오류 중 가장 큰 비중을 차지합니다 "
+            f"({top_share:.1f}%)."
+        ),
         xlabel="오류 수",
         output_path=CHART_DIR / "error_area_counts.png",
         colors=colors,
+        value_formatter=lambda index, value: (
+            f"{value:,}건 ({percentages[index]:.1f}%)"
+        ),
     )
 
 
@@ -175,18 +260,20 @@ def _draw_horizontal_bar(
     labels: list[str],
     values: list[int],
     title: str,
+    subtitle: str,
     xlabel: str,
     output_path: Path,
     colors: list[str],
     value_formatter: Callable[[int, int], str] | None = None,
     xaxis_formatter: Callable[[float], str] | None = None,
 ) -> None:
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = _create_chart_figure()
     bars = ax.barh(labels, values, color=colors)
     ax.invert_yaxis()
-    _style_axes(ax, title=title, x_grid=True)
+    _add_chart_context(fig, title=title, subtitle=subtitle)
+    _style_axes(ax, x_grid=True)
     ax.set_xlabel(xlabel)
-    ax.set_xlim(0, max(values) * 1.32 if values else 1)
+    ax.set_xlim(0, max(values) * 1.38 if values else 1)
     if xaxis_formatter is not None:
         ax.xaxis.set_major_formatter(
             FuncFormatter(lambda value, _: xaxis_formatter(value))
@@ -212,11 +299,9 @@ def _draw_horizontal_bar(
 def _style_axes(
     ax: plt.Axes,
     *,
-    title: str,
     x_grid: bool = False,
     y_grid: bool = False,
 ) -> None:
-    ax.set_title(title, fontsize=15, fontweight="bold", color=TEXT_COLOR, pad=16)
     ax.set_facecolor("white")
     ax.figure.set_facecolor("white")
     ax.spines["top"].set_visible(False)
@@ -231,6 +316,47 @@ def _style_axes(
         ax.grid(axis="x", color=GRID_COLOR, linewidth=0.8)
     if y_grid:
         ax.grid(axis="y", color=GRID_COLOR, linewidth=0.8)
+
+
+def _create_chart_figure() -> tuple[plt.Figure, plt.Axes]:
+    return plt.subplots(figsize=(9, 5.6))
+
+
+def _add_chart_context(
+    fig: plt.Figure,
+    *,
+    title: str,
+    subtitle: str,
+    footnote: str = DEFAULT_FOOTNOTE,
+) -> None:
+    fig.text(
+        0.075,
+        0.955,
+        title,
+        ha="left",
+        va="top",
+        fontsize=17,
+        fontweight="bold",
+        color=TEXT_COLOR,
+    )
+    fig.text(
+        0.075,
+        0.905,
+        subtitle,
+        ha="left",
+        va="top",
+        fontsize=10.5,
+        color=MUTED_TEXT_COLOR,
+    )
+    fig.text(
+        0.075,
+        0.03,
+        footnote,
+        ha="left",
+        va="bottom",
+        fontsize=8.5,
+        color=MUTED_TEXT_COLOR,
+    )
 
 
 def _configure_font() -> None:
@@ -248,6 +374,7 @@ def _label_vertical_bar(
     label: str,
     *,
     y: float | None = None,
+    fontweight: str = "normal",
 ) -> None:
     label_y = bar.get_height() if y is None else y
     ax.text(
@@ -257,12 +384,13 @@ def _label_vertical_bar(
         ha="center",
         va="bottom",
         fontsize=9,
+        fontweight=fontweight,
         color=TEXT_COLOR,
     )
 
 
 def _finish_chart(fig: plt.Figure, output_path: Path) -> None:
-    fig.tight_layout()
+    fig.tight_layout(rect=(0.045, 0.075, 0.985, 0.86))
     fig.savefig(output_path, dpi=160, bbox_inches="tight")
     plt.close(fig)
 
