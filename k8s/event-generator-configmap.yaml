@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: liveklass-event-generator-config
+data:
+  POSTGRES_DB: liveklass
+  POSTGRES_USER: liveklass
+  POSTGRES_HOST: liveklass-postgres
+  POSTGRES_PORT: "5432"

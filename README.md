@@ -224,3 +224,19 @@ docker compose run --rm -v "$PWD/charts:/app/charts" app python -m src.visualize
 핵심 방향은 PostgreSQL 직접 적재에서 끝내지 않고,
 `Kinesis Data Streams`, `Kinesis Data Firehose`, `S3`, `RDS PostgreSQL`, `Glue`, `Athena`, `QuickSight`, `CloudWatch`, `SQS DLQ`를 조합해
 실시간 이벤트 수집, raw archive, SQL 분석, BI 시각화, 장애 재처리가 가능한 구조로 확장하는 것입니다.
+
+Kubernetes/EKS는 현재 과제의 필수 구현이 아니라 향후 container orchestration 확장안으로 검토했습니다.
+현재 구조에서 어떤 부분에 적용할 수 있고 왜 당장은 ECS Fargate가 더 적절한지는 [docs/kubernetes-architecture.md](docs/kubernetes-architecture.md)에 정리했습니다.
+
+### Kubernetes 선택 과제
+
+Step 1에서 만든 이벤트 생성기 앱을 Kubernetes에서 실행한다고 가정하고, 최소 manifest 예시를 `k8s/`에 작성했습니다.
+
+- [k8s/event-generator-configmap.yaml](k8s/event-generator-configmap.yaml)
+  - `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_HOST`, `POSTGRES_PORT`처럼 민감하지 않은 DB 연결 설정을 분리합니다.
+  - container image나 code를 바꾸지 않고 환경별 설정만 바꿀 수 있도록 `ConfigMap`을 선택했습니다.
+- [k8s/event-generator-job.yaml](k8s/event-generator-job.yaml)
+  - `python -m src.main`을 한 번 실행해 synthetic event를 생성하고 PostgreSQL에 적재하는 batch 작업입니다.
+  - 이벤트 생성기는 계속 떠 있는 API 서버가 아니라 실행 후 종료되는 작업이므로 `Deployment`보다 `Job`이 더 적합하다고 판단했습니다.
+
+DB password는 실제 운영에서 `Secret`으로 관리해야 하므로 manifest에는 값을 직접 넣지 않고 `liveklass-db-secret`을 참조하도록 작성했습니다.

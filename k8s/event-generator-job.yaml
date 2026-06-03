@@ -1,0 +1,24 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: liveklass-event-generator
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: event-generator
+          image: ghcr.io/vividbaek/liveklass-de-assignment:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "src.main"]
+          envFrom:
+            - configMapRef:
+                name: liveklass-event-generator-config
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: liveklass-db-secret
+                  key: POSTGRES_PASSWORD
