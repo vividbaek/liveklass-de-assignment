@@ -3,7 +3,7 @@ from __future__ import annotations
 import random
 from datetime import datetime, timedelta
 from typing import Any
-from uuid import uuid4
+from uuid import UUID
 
 from src.enums.event_values import (
     COURSES,
@@ -15,34 +15,44 @@ from src.enums.event_values import (
 
 
 Event = dict[str, Any]
+DEFAULT_BASE_TIME = datetime(2026, 1, 1, 12, 0, 0)
 
 
 def generate_events(
     target_sessions: int = 250,
     seed: int | None = 42,
     *,
-    target_count: int | None = None,
+    approx_target_count: int | None = None,
+    base_time: datetime | None = None,
 ) -> list[Event]:
     rng = random.Random(seed)
-    session_count = target_count // 4 if target_count is not None else target_sessions
+    session_count = (
+        max(1, approx_target_count // 4)
+        if approx_target_count is not None
+        else target_sessions
+    )
+    reference_time = base_time or DEFAULT_BASE_TIME
     events: list[Event] = []
 
     for _ in range(session_count):
-        events.extend(_generate_session_events(rng))
+        events.extend(_generate_session_events(rng, reference_time))
 
     return sorted(events, key=lambda event: event["event_time"])
 
 
-def _generate_session_events(rng: random.Random) -> list[Event]:
-    session_id = f"sess_{uuid4().hex[:12]}"
-    base_time = _random_session_start_time(rng)
+def _generate_session_events(
+    rng: random.Random,
+    reference_time: datetime,
+) -> list[Event]:
+    session_id = _new_compact_id("sess", rng, 12)
+    base_time = _random_session_start_time(rng, reference_time)
     device_type = rng.choice(DEVICE_TYPES)
     course = rng.choice(COURSES)
     lesson = rng.choice(course["lessons"])
     scenario = _choose_scenario(rng)
 
     is_member = scenario == "paid_learning" or rng.random() < 0.42
-    user_id = _new_user_id() if is_member else None
+    user_id = _new_user_id(rng) if is_member else None
     user_type = "member" if is_member else "guest"
 
     context = {
@@ -61,6 +71,7 @@ def _generate_session_events(rng: random.Random) -> list[Event]:
     events.append(
         _base_event(
             event_type="page_view",
+            rng=rng,
             event_time=cursor,
             page_url=rng.choice(["/", "/courses", "/webinars", "/community"]),
             duration_seconds=page_duration,
@@ -73,6 +84,7 @@ def _generate_session_events(rng: random.Random) -> list[Event]:
     events.append(
         _base_event(
             event_type="course_view",
+            rng=rng,
             event_time=cursor,
             page_url=f"/courses/{course['course_id']}",
             duration_seconds=course_duration,
@@ -84,11 +96,14 @@ def _generate_session_events(rng: random.Random) -> list[Event]:
     if scenario == "browse_only":
         return events
 
-    lesson_access_type = "paid_enrolled" if scenario == "paid_learning" else "free_preview"
+    lesson_access_type = (
+        "paid_enrolled" if scenario == "paid_learning" else "free_preview"
+    )
     watch_seconds = _watch_seconds(rng, scenario)
     events.append(
         _base_event(
             event_type="lesson_started",
+            rng=rng,
             event_time=cursor,
             lesson_access_type=lesson_access_type,
             page_url=f"/courses/{course['course_id']}/lessons/{lesson['lesson_id']}",
@@ -107,9 +122,12 @@ def _generate_session_events(rng: random.Random) -> list[Event]:
         events.append(
             _base_event(
                 event_type="lesson_completed",
+                rng=rng,
                 event_time=cursor,
                 lesson_access_type=lesson_access_type,
-                page_url=f"/courses/{course['course_id']}/lessons/{lesson['lesson_id']}",
+                page_url=(
+                    f"/courses/{course['course_id']}/lessons/{lesson['lesson_id']}"
+                ),
                 duration_seconds=completed_seconds,
                 **context,
             )
@@ -122,12 +140,13 @@ def _generate_session_events(rng: random.Random) -> list[Event]:
         "payment_error",
     }:
         if context["user_id"] is None:
-            context["user_id"] = _new_user_id()
+            context["user_id"] = _new_user_id(rng)
             context["user_type"] = "member"
 
         events.append(
             _base_event(
                 event_type="checkout_started",
+                rng=rng,
                 event_time=cursor,
                 page_url=f"/checkout/{course['course_id']}",
                 **_event_context(context, lesson_id=None),
@@ -139,6 +158,7 @@ def _generate_session_events(rng: random.Random) -> list[Event]:
         events.append(
             _base_event(
                 event_type="error_occurred",
+                rng=rng,
                 event_time=cursor,
                 page_url=f"/checkout/{course['course_id']}",
                 error_area="payment",
@@ -150,13 +170,14 @@ def _generate_session_events(rng: random.Random) -> list[Event]:
 
     if scenario in {"preview_to_purchase", "paid_learning"}:
         if context["user_id"] is None:
-            context["user_id"] = _new_user_id()
+            context["user_id"] = _new_user_id(rng)
             context["user_type"] = "member"
 
         if scenario == "paid_learning" and not _has_event(events, "checkout_started"):
             events.append(
                 _base_event(
                     event_type="checkout_started",
+                    rng=rng,
                     event_time=cursor,
                     page_url=f"/checkout/{course['course_id']}",
                     **_event_context(context, lesson_id=None),
@@ -167,6 +188,7 @@ def _generate_session_events(rng: random.Random) -> list[Event]:
         events.append(
             _base_event(
                 event_type="purchase_completed",
+                rng=rng,
                 event_time=cursor,
                 page_url="/checkout/success",
                 amount=course["price"],
@@ -182,6 +204,7 @@ def _generate_session_events(rng: random.Random) -> list[Event]:
         events.append(
             _base_event(
                 event_type="error_occurred",
+                rng=rng,
                 event_time=cursor + timedelta(seconds=rng.randint(30, 300)),
                 page_url=_error_page_url(
                     error_area,
@@ -200,6 +223,7 @@ def _generate_session_events(rng: random.Random) -> list[Event]:
 def _base_event(
     *,
     event_type: str,
+    rng: random.Random,
     event_time: datetime,
     session_id: str,
     user_id: str | None,
@@ -216,7 +240,7 @@ def _base_event(
     error_code: str | None = None,
 ) -> Event:
     return {
-        "event_id": str(uuid4()),
+        "event_id": _new_uuid(rng),
         "event_type": event_type,
         "event_time": event_time,
         "user_id": user_id,
@@ -245,9 +269,11 @@ def _choose_scenario(rng: random.Random) -> str:
     return rng.choices(scenarios, weights=weights, k=1)[0]
 
 
-def _random_session_start_time(rng: random.Random) -> datetime:
-    now = datetime.now().replace(microsecond=0)
-    return now - timedelta(
+def _random_session_start_time(
+    rng: random.Random,
+    reference_time: datetime,
+) -> datetime:
+    return reference_time.replace(microsecond=0) - timedelta(
         days=rng.randint(0, 6),
         hours=rng.randint(0, 23),
         minutes=rng.randint(0, 59),
@@ -255,12 +281,24 @@ def _random_session_start_time(rng: random.Random) -> datetime:
     )
 
 
-def _move_time(event_time: datetime, duration_seconds: int, gap_seconds: int) -> datetime:
+def _move_time(
+    event_time: datetime,
+    duration_seconds: int,
+    gap_seconds: int,
+) -> datetime:
     return event_time + timedelta(seconds=duration_seconds + gap_seconds)
 
 
-def _new_user_id() -> str:
-    return f"user_{uuid4().hex[:10]}"
+def _new_user_id(rng: random.Random) -> str:
+    return _new_compact_id("user", rng, 10)
+
+
+def _new_compact_id(prefix: str, rng: random.Random, length: int) -> str:
+    return f"{prefix}_{rng.getrandbits(length * 4):0{length}x}"
+
+
+def _new_uuid(rng: random.Random) -> str:
+    return str(UUID(int=rng.getrandbits(128), version=4))
 
 
 def _course_view_duration(rng: random.Random, scenario: str) -> int:
