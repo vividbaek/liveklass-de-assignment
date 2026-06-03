@@ -56,8 +56,88 @@ CREATE TABLE IF NOT EXISTS events (
 
     -- 오류 유형을 구분하기 위한 코드입니다.
     -- 예: PAYMENT_FAILED, VIDEO_BUFFERING, LIVE_JOIN_TIMEOUT
-    error_code VARCHAR(50)
+    error_code VARCHAR(50),
+
+    CONSTRAINT chk_events_event_type CHECK (
+        event_type IN (
+            'page_view',
+            'course_view',
+            'lesson_started',
+            'lesson_completed',
+            'checkout_started',
+            'purchase_completed',
+            'error_occurred'
+        )
+    ),
+    CONSTRAINT chk_events_user_type CHECK (
+        user_type IN ('guest', 'member')
+    ),
+    CONSTRAINT chk_events_duration_seconds CHECK (
+        duration_seconds IS NULL OR duration_seconds >= 0
+    ),
+    CONSTRAINT chk_events_amount CHECK (
+        amount IS NULL OR amount >= 0
+    )
 );
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'events'::regclass
+          AND conname = 'chk_events_event_type'
+    ) THEN
+        ALTER TABLE events
+        ADD CONSTRAINT chk_events_event_type CHECK (
+            event_type IN (
+                'page_view',
+                'course_view',
+                'lesson_started',
+                'lesson_completed',
+                'checkout_started',
+                'purchase_completed',
+                'error_occurred'
+            )
+        );
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'events'::regclass
+          AND conname = 'chk_events_user_type'
+    ) THEN
+        ALTER TABLE events
+        ADD CONSTRAINT chk_events_user_type CHECK (
+            user_type IN ('guest', 'member')
+        );
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'events'::regclass
+          AND conname = 'chk_events_duration_seconds'
+    ) THEN
+        ALTER TABLE events
+        ADD CONSTRAINT chk_events_duration_seconds CHECK (
+            duration_seconds IS NULL OR duration_seconds >= 0
+        );
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'events'::regclass
+          AND conname = 'chk_events_amount'
+    ) THEN
+        ALTER TABLE events
+        ADD CONSTRAINT chk_events_amount CHECK (
+            amount IS NULL OR amount >= 0
+        );
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_events_event_type
 ON events (event_type);

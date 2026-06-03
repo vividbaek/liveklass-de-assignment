@@ -69,13 +69,14 @@ PostgreSQL에 적재한 뒤 SQL 집계와 PNG 시각화를 통해 학습/결제 
 
 주요 분석 쿼리가 `event_type`, `session_id`, `course_id`, `event_time`을 중심으로 동작하므로 해당 column에 인덱스를 추가했습니다.
 복합 인덱스는 결제 전환 분석과 강의별 매출 분석처럼 자주 사용할 조건 조합을 기준으로 최소한만 추가했습니다.
+또한 `event_type`, `user_type`, `duration_seconds`, `amount`에는 기본적인 `CHECK` constraint를 두어 잘못된 이벤트 값이 적재되지 않도록 했습니다.
 파티셔닝은 실제 운영 트래픽과 보관 주기가 확인된 뒤 적용하는 것이 적절하다고 판단했습니다.
 
 ## 적재 및 검증 과정
 
 Docker Compose로 PostgreSQL과 Python app을 함께 실행합니다.
 
-데이터 적재, 분석 SQL 실행, PNG 차트 생성을 한 번에 재현하려면 다음 스크립트를 실행합니다.
+제출 결과를 한 번에 재현하려면 다음 스크립트를 실행합니다.
 
 ```bash
 bash scripts/run_pipeline.sh
@@ -84,6 +85,8 @@ bash scripts/run_pipeline.sh
 이 스크립트는 PostgreSQL을 실행한 뒤 synthetic event를 적재하고,
 `sql/analysis_queries.sql`을 실행한 다음 `charts/`에 최종 PNG 이미지를 생성합니다.
 
+Docker Compose 요구사항인 앱 + DB 실행과 이벤트 생성/저장만 확인하려면 다음 명령어를 사용할 수 있습니다.
+
 ```bash
 docker compose up --build
 ```
@@ -91,6 +94,8 @@ docker compose up --build
 기본 실행에서는 2,500개 session에서 약 10,000건의 synthetic event를 생성하고,
 1,000건 단위 batch로 PostgreSQL에 적재합니다.
 batch insert는 대량 이벤트 적재 상황을 단순하게 재현하기 위해 선택했습니다.
+이벤트 수는 session scenario별 이벤트 개수가 달라서 정확히 고정하지 않고, session 수 기준으로 약 1만 건이 생성되도록 설계했습니다.
+기본 generator는 고정된 `seed`와 기준 시간을 사용하므로 같은 코드와 설정에서는 동일한 synthetic event를 재현할 수 있습니다.
 
 실행 흐름은 다음과 같습니다.
 
@@ -109,12 +114,12 @@ PostgreSQL readiness 확인
 PostgreSQL 준비 완료
 데이터베이스 스키마 초기화 완료
 events 테이블 초기화 완료
-2500개 session에서 합성 이벤트 9972건 생성
+2500개 session에서 합성 이벤트 10008건 생성
 배치 1 적재 완료: 1000행
 ...
-배치 10 적재 완료: 972행
-PostgreSQL에 이벤트 9972건 적재 완료
-events 테이블 행 수: 9972
+배치 11 적재 완료: 8행
+PostgreSQL에 이벤트 10008건 적재 완료
+events 테이블 행 수: 10008
 ```
 
 과제 재현성을 위해 실행 시 `events` 테이블을 초기화한 뒤 synthetic event를 적재합니다.
@@ -167,6 +172,17 @@ DB에 이벤트를 적재한 뒤 다음 명령어로 차트를 만들 수 있습
 docker compose up --build -d
 docker compose run --rm -v "$PWD/charts:/app/charts" app python -m src.visualize
 ```
+
+## 테스트
+
+로컬에서 테스트를 실행하려면 개발 의존성을 설치한 뒤 `pytest`를 실행합니다.
+
+```bash
+python3 -m pip install -r requirements-dev.txt
+python3 -m pytest tests -q
+```
+
+Docker 이미지에는 실행에 필요한 runtime 의존성만 포함하고, `pytest`는 `requirements-dev.txt`로 분리했습니다.
 
 ### Session funnel conversion
 
