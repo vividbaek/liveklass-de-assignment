@@ -23,6 +23,8 @@ services:
       POSTGRES_PASSWORD: liveklass
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
+    volumes:
+      - ./charts:/app/charts
     depends_on:
       postgres:
         condition: service_healthy

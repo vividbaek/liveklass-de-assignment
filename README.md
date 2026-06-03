@@ -1,259 +1,212 @@
-# Liveklass Event Pipeline Assignment
+# Liveklass Event Pipeline
 
-Liveklass와 같은 온라인 강의 플랫폼에서 발생할 수 있는 synthetic event를 생성하고,
-PostgreSQL에 적재한 뒤 SQL 집계와 PNG 시각화를 통해 학습/결제 전환 인사이트를 확인하는 데이터 엔지니어링 과제입니다.
+온라인 강의 서비스에서 발생할 수 있는 가상 이벤트를 생성하고, PostgreSQL에 필드별로 저장한 뒤 SQL 집계 결과를 PNG 차트로 시각화하는 데이터 파이프라인 과제입니다.
 
-## 프로젝트 개요
-
-이번 구현의 목표는 단순히 이벤트를 많이 만드는 것이 아니라,
-분석 가능한 형태의 raw event log를 설계하고 적재한 뒤 실제 비즈니스 질문에 가까운 지표로 검증하는 것입니다.
-
-현재 구현 범위는 다음과 같습니다.
-
-1. session 기반 synthetic event generator
-2. PostgreSQL `events` raw log table
-3. 1,000건 단위 batch insert
-4. 분석용 SQL 쿼리
-5. `matplotlib` 기반 PNG 시각화
-
-## 문제 접근 방식
-
-먼저 운영 서비스의 정규화된 사용자/강의/결제 테이블을 만드는 대신,
-분석에 필요한 사용자 행동을 하나의 `events` 테이블에 append하는 구조를 선택했습니다.
-
-이 방식은 원본 이벤트를 최대한 보존한 뒤, SQL 분석 단계에서 session funnel, 강의별 매출,
-무료 체험 시청 깊이별 전환율, 오류 영역별 발생 수 같은 분석 결과를 가공하기 쉽습니다.
-현업에서도 raw event는 단일 event table 또는 날짜별 event table에 저장하고,
-분석 목적에 따라 funnel, revenue, retention mart로 분리하는 방식이 일반적입니다.
-
-## 이벤트 및 시나리오 설계
-
-현재 설계한 이벤트 타입은 다음과 같습니다.
-
-- `page_view`: 랜딩, 강의 목록, 커뮤니티 등 일반 페이지 방문
-- `course_view`: 특정 강의 상세 페이지 조회
-- `lesson_started`: 무료 체험 콘텐츠 또는 유료 수강 콘텐츠 시청 시작
-- `lesson_completed`: 무료 체험 콘텐츠 또는 유료 수강 콘텐츠 시청 완료
-- `checkout_started`: 결제 시작
-- `purchase_completed`: 결제 완료
-- `error_occurred`: 결제, 영상, 라이브 수업, 강의 시청 중 오류 발생
-
-이벤트는 완전 무작위가 아니라 온라인 강의 플랫폼에서 발생할 수 있는 대표 session scenario를 기반으로 생성합니다.
-각 session은 하나의 `session_id`를 공유하며, 내부 이벤트 시간은 사용자의 행동 흐름에 맞춰 순차적으로 증가합니다.
-
-대표 scenario는 다음과 같습니다.
-
-- `browse_only`: 강의 탐색 후 이탈
-- `preview_dropoff`: 무료 체험 콘텐츠 시청 중 이탈
-- `preview_completed_no_purchase`: 무료 체험 콘텐츠 완료 후 미구매
-- `checkout_abandoned`: 결제 시작 후 이탈
-- `preview_to_purchase`: 무료 체험 콘텐츠 시청 후 결제 완료
-- `payment_error`: 결제 중 오류 발생
-- `paid_learning`: 결제 후 유료 콘텐츠 수강
-
-이 구조를 통해 `session_id` 기준으로 무료 체험 시청 시간, 결제 시작, 결제 완료, 오류 발생 흐름을 함께 분석할 수 있습니다.
-또한 synthetic data가 특정 시청 시간 구간에서만 전환되도록 고정하지 않고,
-짧게 보고도 구매하는 session과 오래 보고도 미구매하는 session이 함께 나오도록 일부 overlap을 두었습니다.
-이를 통해 시청 시간이 구매 전환에 영향을 주는 경향은 보이되, 실제 사용자 행동처럼 예외도 존재하도록 설계했습니다.
-
-## 스키마와 인덱스 설계 이유
-
-`events` 테이블은 분석을 위한 raw event log 저장소입니다.
-`event_type`이 각 row의 의미를 결정하며, 이벤트별로 필요하지 않은 필드는 `NULL`을 허용합니다.
-
-- `session_id`: 로그인 여부와 관계없이 하나의 방문 흐름을 추적합니다.
-- `event_type`: funnel step, 결제, 오류 등 row의 분석 의미를 결정합니다.
-- `duration_seconds`: 페이지 체류 시간 또는 강의 콘텐츠 시청 시간을 초 단위로 저장합니다.
-- `amount`: `purchase_completed` 이벤트에서 원화 기준 결제 금액을 저장합니다.
-- `error_area`: `error_occurred` 이벤트에서 결제/영상/라이브/강의 영역을 구분합니다.
-
-주요 분석 쿼리가 `event_type`, `session_id`, `course_id`, `event_time`을 중심으로 동작하므로 해당 column에 인덱스를 추가했습니다.
-복합 인덱스는 결제 전환 분석과 강의별 매출 분석처럼 자주 사용할 조건 조합을 기준으로 최소한만 추가했습니다.
-또한 `event_type`, `user_type`, `duration_seconds`, `amount`에는 기본적인 `CHECK` constraint를 두어 잘못된 이벤트 값이 적재되지 않도록 했습니다.
-파티셔닝은 실제 운영 트래픽과 보관 주기가 확인된 뒤 적용하는 것이 적절하다고 판단했습니다.
-
-## 적재 및 검증 과정
-
-Docker Compose로 PostgreSQL과 Python app을 함께 실행합니다.
-
-제출 결과를 한 번에 재현하려면 다음 스크립트를 실행합니다.
-
-```bash
-bash scripts/run_pipeline.sh
-```
-
-이 스크립트는 PostgreSQL을 실행한 뒤 synthetic event를 적재하고,
-`sql/analysis_queries.sql`을 실행한 다음 `charts/`에 최종 PNG 이미지를 생성합니다.
-
-Docker Compose 요구사항인 앱 + DB 실행과 이벤트 생성/저장만 확인하려면 다음 명령어를 사용할 수 있습니다.
-
-```bash
-docker compose up --build
-```
-
-기본 실행에서는 2,500개 session에서 약 10,000건의 synthetic event를 생성하고,
-1,000건 단위 batch로 PostgreSQL에 적재합니다.
-batch insert는 대량 이벤트 적재 상황을 단순하게 재현하기 위해 선택했습니다.
-이벤트 수는 session scenario별 이벤트 개수가 달라서 정확히 고정하지 않고, session 수 기준으로 약 1만 건이 생성되도록 설계했습니다.
-기본 generator는 고정된 `seed`와 기준 시간을 사용하므로 같은 코드와 설정에서는 동일한 synthetic event를 재현할 수 있습니다.
-
-실행 흐름은 다음과 같습니다.
+전체 흐름은 다음과 같습니다.
 
 ```text
-PostgreSQL readiness 확인
-→ sql/init.sql 실행
-→ events table TRUNCATE
-→ synthetic events 생성
-→ 1,000건 단위 batch insert
-→ SELECT COUNT(*) FROM events
+이벤트 생성기 -> PostgreSQL -> SQL 집계 -> PNG 차트
 ```
 
-실행 로그 예시는 다음과 같습니다.
+## 실행 방법
+
+필요한 도구:
+
+- Docker
+- Docker Compose
+
+전체 파이프라인은 아래 명령 한 번으로 실행됩니다.
+
+```bash
+docker compose up
+```
+
+실행하면 PostgreSQL과 Python 앱 컨테이너가 함께 시작됩니다. 앱은 DB가 준비될 때까지 기다린 뒤 스키마를 초기화하고, 가상 이벤트를 생성해 `events` 테이블에 적재합니다. 적재가 끝나면 SQL 집계 결과를 바탕으로 PNG 차트를 생성합니다.
+
+`docker-compose.yml`에 앱 빌드 설정이 포함되어 있어, 로컬에 이미지가 없으면 Compose가 자동으로 앱 이미지를 빌드합니다. 코드를 수정한 뒤 이미지를 강제로 다시 만들고 싶을 때만 `docker compose up --build`를 사용하면 됩니다.
+
+실행 흐름:
 
 ```text
-PostgreSQL 준비 완료
-데이터베이스 스키마 초기화 완료
-events 테이블 초기화 완료
-2500개 session에서 합성 이벤트 10008건 생성
-배치 1 적재 완료: 1000행
-...
-배치 11 적재 완료: 8행
-PostgreSQL에 이벤트 10008건 적재 완료
-events 테이블 행 수: 10008
+PostgreSQL 준비 상태 확인
+-> sql/init.sql 실행
+-> events 테이블 초기화
+-> 가상 이벤트 생성
+-> 배치 적재
+-> 적재 건수 검증
+-> SQL 집계 기반 PNG 차트 생성
 ```
 
-과제 재현성을 위해 실행 시 `events` 테이블을 초기화한 뒤 synthetic event를 적재합니다.
-실제 운영 환경에서는 append-only 방식으로 이벤트를 누적하고, partitioning 또는 retention policy를 적용하는 것이 일반적입니다.
+결과 파일은 `charts/` 디렉터리에 생성됩니다.
 
-DB에 직접 접속해서 확인하려면 다음 명령어를 사용할 수 있습니다.
+- `charts/session_funnel.png`
+- `charts/preview_watch_conversion.png`
+- `charts/course_revenue.png`
+- `charts/error_area_counts.png`
+
+컨테이너 정리가 필요하면 아래 명령을 실행합니다.
 
 ```bash
-docker exec -it liveklass-postgres psql -U liveklass -d liveklass
+docker compose down
 ```
 
-분석 쿼리는 다음 명령어로 실행할 수 있습니다.
+## 프로젝트 구조
 
-```bash
-docker exec -i liveklass-postgres psql -U liveklass -d liveklass < sql/analysis_queries.sql
+```text
+.
+├── docker-compose.yml
+├── Dockerfile
+├── src/
+│   ├── main.py              # 전체 파이프라인 실행
+│   ├── event_generator.py   # 가상 이벤트 생성
+│   ├── db.py                # DB 연결, 스키마 초기화, 적재
+│   ├── analysis.py          # SQL 쿼리 실행
+│   └── visualize.py         # PNG 차트 생성
+├── sql/
+│   ├── init.sql             # events 테이블 스키마
+│   └── queries/             # 분석 쿼리
+├── charts/                  # 시각화 결과
+├── k8s/                     # Kubernetes 선택 과제 매니페스트
+└── docs/                    # AWS/Kubernetes 설계 문서
 ```
 
-각 지표별 SQL은 `sql/queries/`에도 개별 파일로 분리되어 있습니다.
-예를 들어 특정 지표만 확인하고 싶다면 다음처럼 실행할 수 있습니다.
+## 이벤트 설계
 
-```bash
-docker exec -i liveklass-postgres psql -U liveklass -d liveklass < sql/queries/session_funnel.sql
-```
+이벤트는 온라인 강의 서비스의 방문, 학습, 결제, 오류 흐름을 표현하도록 설계했습니다.
 
-## 지표 선정 이유
+| 이벤트 타입 | 의미 |
+|---|---|
+| `page_view` | 메인, 강의 목록, 커뮤니티 등 일반 페이지 조회 |
+| `course_view` | 특정 강의 상세 페이지 조회 |
+| `lesson_started` | 무료 체험 또는 유료 강의 시청 시작 |
+| `lesson_completed` | 강의 콘텐츠 시청 완료 |
+| `checkout_started` | 결제 페이지 진입 |
+| `purchase_completed` | 결제 완료 |
+| `error_occurred` | 결제, 영상, 라이브 수업, 강의 로딩 오류 |
 
-이번 과제에서는 단순 이벤트 발생 수보다, 온라인 강의 비즈니스에서 실제로 의사결정에 가까운 지표를 우선했습니다.
+단순히 이벤트 타입별 발생 수만 보기보다 실제 서비스 의사결정에 가까운 분석이 가능하도록 `session_id`, `course_id`, `lesson_id`, `duration_seconds`, `amount`, `error_area`를 함께 생성했습니다. 특히 `course_view -> lesson_started -> checkout_started -> purchase_completed` 흐름을 세션 기준 퍼널로 볼 수 있게 구성했습니다.
 
-1. Session funnel conversion
-   - `course_view → lesson_started → checkout_started → purchase_completed` 흐름에서 어디서 이탈하는지 보기 위한 지표입니다.
-2. Free preview watch time conversion
-   - 무료 체험 시청 시간이 길어질수록 구매 전환으로 이어지는지 확인하기 위한 지표입니다.
-3. Course revenue
-   - 어떤 강의가 매출에 기여하는지 보기 위한 지표입니다. 가격 차이가 있으므로 구매 수와 매출을 함께 봅니다.
-4. Errors by area
-   - 결제, 영상, 라이브 수업, 강의 로딩 중 어떤 영역에서 운영 이슈가 많이 발생하는지 확인하기 위한 지표입니다.
+기본 실행에서는 2,500개 세션에서 약 10,000건의 이벤트를 생성합니다. 이벤트 생성기는 고정 seed를 사용하므로 같은 코드와 설정에서는 같은 데이터를 재현할 수 있습니다.
 
-시간대별 클릭률은 이번 분석에서 제외했습니다.
-현재 이벤트 설계에는 `impression` 이벤트가 없어 CTR을 정확히 정의하기 어렵고,
-synthetic event의 시간대 분포도 랜덤이므로 과제 제출용 핵심 인사이트로는 적합하지 않다고 판단했습니다.
+## 저장소 선택 이유
 
-## 시각화 결과
+저장소는 PostgreSQL을 선택했습니다.
 
-분석 결과는 `matplotlib` 기반 PNG로 생성합니다.
-DB에 이벤트를 적재한 뒤 다음 명령어로 차트를 만들 수 있습니다.
-차트는 핵심 전환 단계와 리스크 영역이 한눈에 보이도록 muted color와 강조 색상을 함께 사용했습니다.
-각 PNG에는 담당자가 빠르게 해석할 수 있도록 핵심 insight subtitle과 집계 기준 footnote를 포함했습니다.
-한글 title과 label이 Docker 환경에서도 동일하게 렌더링되도록 `Pretendard` 폰트를 repo에 포함해 사용합니다.
+- JSON 문자열을 통째로 저장하지 않고 각 필드를 컬럼으로 분리하기 좋습니다.
+- 이벤트 타입, 세션, 강의, 시간 기준 SQL 집계가 쉽습니다.
+- Docker Compose로 앱과 DB를 함께 띄우기 쉬워 과제 재현성이 좋습니다.
 
-```bash
-docker compose up --build -d
-docker compose run --rm -v "$PWD/charts:/app/charts" app python -m src.visualize
-```
+이번 과제는 작은 배치 파이프라인이므로 PostgreSQL 단일 테이블로 충분하다고 판단했습니다. 실제 운영 환경이라면 이벤트 수집 API와 DB 사이에 Kinesis, Kafka, SQS 같은 큐 또는 스트리밍 계층을 두고, 원본 이벤트는 S3 같은 객체 스토리지에 함께 보관하는 구조를 고려할 수 있습니다.
+
+이벤트 로그는 시간이 지나며 필드가 늘어날 수 있습니다. 다만 이번 과제에서는 SQL 집계와 결제/전환 분석을 직접 보여주는 것이 더 중요하다고 봤습니다. 운영에서 스키마 변화가 잦아진다면 `schema_version` 컬럼이나 선택적 `metadata JSONB` 컬럼을 추가해 유연성을 보완할 수 있습니다.
+
+## 스키마 설명
+
+이벤트는 `events` 테이블에 저장합니다. 자세한 DDL은 `sql/init.sql`에 있습니다.
+
+| 컬럼 | 타입 | NULL 허용 | 설명 |
+|---|---|---|---|
+| `event_id` | UUID | No | 이벤트 고유 ID, primary key |
+| `event_type` | VARCHAR(50) | No | 이벤트 종류 |
+| `event_time` | TIMESTAMP | No | 이벤트 발생 시각 |
+| `session_id` | VARCHAR(50) | No | 방문 흐름을 묶기 위한 세션 ID |
+| `user_type` | VARCHAR(20) | No | `guest` 또는 `member` |
+| `user_id` | VARCHAR(50) | Yes | 로그인 사용자 ID, 비회원은 NULL |
+| `course_id` | VARCHAR(50) | Yes | 강의 식별자 |
+| `lesson_id` | VARCHAR(50) | Yes | 강의 내 콘텐츠 식별자 |
+| `lesson_access_type` | VARCHAR(30) | Yes | `free_preview`, `paid_enrolled` 등 |
+| `page_url` | TEXT | Yes | 이벤트 발생 페이지 경로 |
+| `device_type` | VARCHAR(20) | Yes | `desktop`, `mobile`, `tablet` |
+| `duration_seconds` | INTEGER | Yes | 페이지 체류 또는 강의 시청 시간 |
+| `amount` | INTEGER | Yes | 결제 금액 |
+| `payment_method` | VARCHAR(30) | Yes | 결제 수단 |
+| `error_area` | VARCHAR(30) | Yes | 오류 발생 영역 |
+| `error_code` | VARCHAR(50) | Yes | 오류 상세 코드 |
+
+테이블은 이벤트 한 건을 한 행으로 저장하는 로그 테이블로 설계했습니다. 모든 이벤트에 공통으로 필요한 `event_id`, `event_type`, `event_time`, `session_id`, `user_type`은 필수 컬럼으로 두고, 결제/강의/오류처럼 특정 이벤트에서만 필요한 값은 NULL을 허용했습니다.
+
+`event_type`, `user_type`, `duration_seconds`, `amount`에는 기본 CHECK 제약을 두어 잘못된 값이 적재되지 않도록 했습니다. 분석 쿼리에서 자주 사용하는 `event_type`, `event_time`, `session_id`, `course_id`, `user_id`에는 인덱스를 추가했습니다.
+
+## 분석 쿼리
+
+분석 쿼리는 `sql/queries/`에 분리했습니다.
+
+| 파일 | 분석 내용 |
+|---|---|
+| `session_funnel.sql` | `course_view -> lesson_started -> checkout_started -> purchase_completed` 세션 퍼널 |
+| `preview_watch_conversion.sql` | 무료 체험 시청 시간 구간별 구매 전환율 |
+| `course_revenue.sql` | 강의별 구매 수와 매출 |
+| `error_area_counts.sql` | 오류 영역별 발생 수 |
+
+과제 요구사항은 최소 2개 이상의 집계 분석이지만, 서비스 관점에서 전환, 매출, 오류를 함께 볼 수 있도록 4개 쿼리를 작성했습니다.
 
 ## 테스트
 
-로컬에서 테스트를 실행하려면 개발 의존성을 설치한 뒤 `pytest`를 실행합니다.
+이벤트 생성기와 검증 로직의 기본 동작은 `pytest`로 확인할 수 있습니다.
 
 ```bash
 python3 -m pip install -r requirements-dev.txt
 python3 -m pytest tests -q
 ```
 
-Docker 이미지에는 실행에 필요한 runtime 의존성만 포함하고, `pytest`는 `requirements-dev.txt`로 분리했습니다.
+## 시각화 결과
 
-### Session funnel conversion
+SQL 집계 결과는 `src/visualize.py`에서 `matplotlib` 기반 PNG로 생성합니다. Docker 환경에서도 한글이 깨지지 않도록 `assets/fonts/`에 포함된 Pretendard 폰트를 사용합니다.
+
+### 세션 퍼널 전환율
 
 ![Session funnel](charts/session_funnel.png)
 
-강의 상세 조회 이후 무료 체험 시청, 결제 시작, 결제 완료로 이어지는 session 수를 보여줍니다.
-단순 이벤트 수가 아니라 session 기준으로 계산해 실제 사용자 흐름의 이탈 지점을 보기 쉽도록 했습니다.
+강의 상세 조회 이후 무료 체험 시청, 결제 시작, 결제 완료로 이어지는 세션 수와 전환율을 보여줍니다.
 
-### Free preview watch time conversion
+### 무료 체험 시청 시간별 전환율
 
 ![Preview watch conversion](charts/preview_watch_conversion.png)
 
-무료 체험 콘텐츠 시청 시간을 bucket으로 나누고, 각 bucket에서 구매 완료로 이어진 session 비율을 계산했습니다.
-시청 시간이 구매 전환과 어떤 관계가 있는지 확인하기 위한 핵심 engagement 지표입니다.
+무료 체험 콘텐츠 시청 시간을 구간으로 나누고, 각 구간에서 구매 완료로 이어진 세션 비율을 계산했습니다.
 
-### Course revenue
+### 강의별 매출
 
 ![Course revenue](charts/course_revenue.png)
 
-강의별 매출과 구매 수를 함께 표시합니다.
-매출만 보면 가격이 높은 강의가 유리할 수 있으므로, 구매 수를 함께 보면서 해석할 수 있도록 했습니다.
+강의별 구매 수와 매출을 함께 비교합니다. 가격 차이가 있으므로 구매 수만 보지 않고 매출 기준도 함께 확인하도록 구성했습니다.
 
-### Errors by area
+### 오류 영역별 발생 수
 
 ![Error area counts](charts/error_area_counts.png)
 
-오류가 어느 영역에서 많이 발생했는지 보여줍니다.
-결제 오류는 구매 전환에 직접 영향을 줄 수 있으므로, funnel 분석과 함께 확인할 운영 지표로 사용했습니다.
+오류가 어느 영역에서 많이 발생했는지 보여줍니다. 결제 오류는 구매 전환에 직접 영향을 줄 수 있어 퍼널 분석과 함께 확인할 운영 지표로 사용했습니다.
 
-> 현재 데이터는 실제 사용자 데이터가 아니라 과제 검증을 위한 synthetic event입니다.
-> 따라서 분석 결과는 실제 비즈니스 결론이 아니라, 이벤트 로그를 통해 어떤 분석이 가능한지 보여주는 예시입니다.
+현재 데이터는 실제 사용자 데이터가 아니라 과제 검증을 위한 가상 이벤트입니다. 따라서 차트의 수치는 실제 비즈니스 결론이 아니라, 이벤트 로그로 어떤 분석이 가능한지 보여주는 예시입니다.
 
-## 운영 확장 방향
+## 구현하면서 고민한 점
 
-이번 구현은 과제 범위를 고려해 Python generator가 batch-style로 이벤트를 생성하는 방식입니다.
-실제 운영 환경에서는 이벤트 생성 API와 DB 사이에 Amazon Kinesis, SQS, Kafka 같은 queue/streaming layer를 둘 수 있습니다.
+첫째, 이벤트를 JSON 하나로 저장하지 않고 분석에 필요한 필드를 컬럼으로 분리했습니다. 과제 요구사항을 만족하는 동시에 SQL 집계가 자연스럽게 동작하도록 하기 위해서입니다.
 
-운영 확장 시 고려할 수 있는 구조는 다음과 같습니다.
+둘째, 단순 이벤트 수보다 세션 기준 분석을 우선했습니다. 같은 사용자가 여러 이벤트를 남길 수 있기 때문에 구매 전환이나 이탈을 볼 때는 이벤트 행 수보다 `session_id` 기준 집계가 더 해석하기 쉽다고 판단했습니다.
 
-- Kinesis/SQS/Kafka: 트래픽 급증 시 buffering 및 consumer 비동기 처리
-- DLQ: 적재 실패 이벤트 격리 및 재처리
-- S3 raw archive: 원본 이벤트 장기 보관 및 data lake 구성
-- Athena/QuickSight: raw archive 기반 ad-hoc query 및 BI dashboard
-- Partitioning/retention: event_time 기준 데이터 관리와 쿼리 성능 최적화
+셋째, 시각화까지 `docker compose up` 한 번으로 끝나도록 구성했습니다. 평가자가 별도 명령을 기억하지 않아도 이벤트 생성, 저장, 집계, 차트 생성을 한 번에 재현할 수 있게 하는 것이 중요하다고 봤습니다.
 
-이를 통해 DB 부하를 완화하고, 장애 상황에서도 이벤트 손실을 줄이며,
-분석 목적에 따라 raw log와 mart table을 분리해 운영할 수 있습니다.
+넷째, 현재 구현은 배치 방식입니다. 운영 환경이라면 누적 적재, 파티셔닝, 보관 정책, 원본 이벤트 보관, DLQ 등을 추가해 장애 대응과 장기 보관을 분리하는 방향으로 확장할 수 있습니다.
 
-## AWS 선택 과제
+## 선택 과제
 
-현재 로컬 batch pipeline을 AWS 운영 환경으로 확장하는 설계는 [docs/aws-architecture.md](docs/aws-architecture.md)에 정리했습니다.
+### AWS 아키텍처
+
+AWS에서 운영한다면 Kinesis, Firehose, S3, RDS PostgreSQL, Glue, Athena, QuickSight, CloudWatch, SQS DLQ를 조합하는 구조를 고려했습니다.
+
+- 문서: [docs/aws-architecture.md](docs/aws-architecture.md)
+- 구성도: [docs/aws-architecture.png](docs/aws-architecture.png)
 
 ![AWS architecture](docs/aws-architecture.png)
 
-핵심 방향은 PostgreSQL 직접 적재에서 끝내지 않고,
-`Kinesis Data Streams`, `Kinesis Data Firehose`, `S3`, `RDS PostgreSQL`, `Glue`, `Athena`, `QuickSight`, `CloudWatch`, `SQS DLQ`를 조합해
-실시간 이벤트 수집, raw archive, SQL 분석, BI 시각화, 장애 재처리가 가능한 구조로 확장하는 것입니다.
+### Kubernetes 매니페스트
 
-Kubernetes/EKS는 현재 과제의 필수 구현이 아니라 향후 container orchestration 확장안으로 검토했습니다.
-현재 구조에서 어떤 부분에 적용할 수 있고 왜 당장은 ECS Fargate가 더 적절한지는 [docs/kubernetes-architecture.md](docs/kubernetes-architecture.md)에 정리했습니다.
+이벤트 생성기 앱을 Kubernetes에서 실행한다고 가정하고 `ConfigMap`과 `Job` 매니페스트를 작성했습니다.
 
-### Kubernetes 선택 과제
-
-Step 1에서 만든 이벤트 생성기 앱을 Kubernetes에서 실행한다고 가정하고, 최소 manifest 예시를 `k8s/`에 작성했습니다.
+Kubernetes는 아직 실무 경험이 많지 않아, 이번 과제에서는 기본 리소스의 역할을 먼저 정리한 뒤 현재 앱에 직접 대응되는 구성을 중심으로 작성했습니다. 이벤트 생성기는 계속 떠 있는 서버가 아니라 실행 후 종료되는 작업이므로, `Deployment`보다 `Job`이 더 적절하다고 판단했습니다.
 
 - [k8s/event-generator-configmap.yaml](k8s/event-generator-configmap.yaml)
-  - `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_HOST`, `POSTGRES_PORT`처럼 민감하지 않은 DB 연결 설정을 분리합니다.
-  - container image나 code를 바꾸지 않고 환경별 설정만 바꿀 수 있도록 `ConfigMap`을 선택했습니다.
 - [k8s/event-generator-job.yaml](k8s/event-generator-job.yaml)
-  - `python -m src.main`을 한 번 실행해 synthetic event를 생성하고 PostgreSQL에 적재하는 batch 작업입니다.
-  - 이벤트 생성기는 계속 떠 있는 API 서버가 아니라 실행 후 종료되는 작업이므로 `Deployment`보다 `Job`이 더 적합하다고 판단했습니다.
 
-DB password는 실제 운영에서 `Secret`으로 관리해야 하므로 manifest에는 값을 직접 넣지 않고 `liveklass-db-secret`을 참조하도록 작성했습니다.
+`ConfigMap`은 민감하지 않은 DB 연결 설정을 분리하기 위해 사용했습니다. DB password는 실제 운영에서 `Secret`으로 관리해야 하므로 매니페스트에서는 `liveklass-db-secret`을 참조하도록 작성했습니다.

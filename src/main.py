@@ -13,6 +13,7 @@ from src.db import (
 from src.event_generator import generate_events
 from src.events.validators import validate_event_keys
 from src.utils.serialization import json_default
+from src.visualize import main as generate_charts
 
 TARGET_SESSIONS = 2500
 BATCH_SIZE = 1000
@@ -49,6 +50,9 @@ def main() -> None:
         raise RuntimeError(
             f"row count가 일치하지 않습니다. generated={len(events)}, stored={stored_count}"
         )
+
+    print()
+    generate_charts()
 
 
 if __name__ == "__main__":
