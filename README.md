@@ -206,6 +206,8 @@ AWS에서 운영한다면 Kinesis, Firehose, S3, RDS PostgreSQL, Glue, Athena, Q
 
 Kubernetes는 아직 실무 경험이 많지 않아, 이번 과제에서는 기본 리소스의 역할을 먼저 정리한 뒤 현재 앱에 직접 대응되는 구성을 중심으로 작성했습니다. 이벤트 생성기는 계속 떠 있는 서버가 아니라 실행 후 종료되는 작업이므로, `Deployment`보다 `Job`이 더 적절하다고 판단했습니다.
 
+다만 실제 운영 환경의 유저 로그 파이프라인이라면 구조가 달라집니다. 유저 앱에서 발생한 이벤트를 계속 수신하는 ingestion API는 `Deployment`와 `Service`로 여러 Pod를 운영하고, queue/stream 뒤에서 이벤트를 저장하는 consumer도 처리량에 맞춰 여러 Pod로 확장하는 것이 더 적절합니다. 현재 `Job` 매니페스트는 운영용 로그 수집 서버가 아니라, 과제에서 만든 이벤트 생성기 스크립트에 맞춘 예시입니다.
+
 - [k8s/event-generator-configmap.yaml](k8s/event-generator-configmap.yaml)
 - [k8s/event-generator-job.yaml](k8s/event-generator-job.yaml)
 
